@@ -3,3 +3,6 @@
 *.mc
 *.vsm
 *.exe
+mcc
+testlex
+vsm

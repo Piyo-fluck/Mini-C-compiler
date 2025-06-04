@@ -578,8 +578,11 @@ static void parse_expression5(code_t *c, lex_t *x, tab_t *gt, tab_t *lt)
     else {syntax_error(x, "'11)' expected");}
   }
   else if (x->type == token_ID) {
-    if (id_isfunc(x->token,gt,lt)) { parse_call(c, x, gt, lt); }
-    else { parse_variable_reference(c, x, gt, lt); }
+    if (id_isfunc(x->token,gt,lt)) {
+      parse_call(c, x, gt, lt);}
+    else {
+      //printf("pop\n");
+      parse_variable_reference(c, x, gt, lt); }
   }
   else if (x->type == token_AND) {
     parse_variable_reference(c, x, gt, lt); 
@@ -593,7 +596,15 @@ static void parse_expression5(code_t *c, lex_t *x, tab_t *gt, tab_t *lt)
 
 static void parse_variable_reference(code_t *c, lex_t *x, tab_t *gt, tab_t *lt)  
 { 
+//   配列変数で "&" がある場合
+// 1: LA b address
+// 2: (添字のコード)
+// 配列変数で "&" がない場合
+// 1: LA b address
+// 2: (添字のコード)
+// 3: LI
   at("parse_variable_reference"); 
+  tab_t *t = NULL;
   if(x->type==token_AND) {
     int var_index;
     lex_get(x);
@@ -601,29 +612,53 @@ static void parse_variable_reference(code_t *c, lex_t *x, tab_t *gt, tab_t *lt)
     strcpy(var_name, x->token);
     //lex_get(x);
     if( (var_index=tab_itab_find(lt, x->token)) != itab_FAIL) {
+      t = lt;
       code_append(c, opcode_LA, 1, (STACK_FRAME_RESERVE + lt->itab[var_index].address));
       lex_get(x);
+      parse_array_index(c,x,gt,lt,t,1);
     }
     else if ((var_index=tab_itab_find(gt, x->token)) != itab_FAIL) {
+      t = gt;
       code_append(c, opcode_LA, 0, gt->itab[var_index].address);
       lex_get(x);
+      parse_array_index(c,x,gt,lt,t,0);
     }
     else {syntax_error(x,"そもそもここまでたどり着くこと自体がおかしいんよ（笑）");}
     free(var_name);
 
   }
   else {
-      int var_index;
-    char* var_name = malloc(sizeof(char)*strlen(x->token));
-  strcpy(var_name, x->token);
-  lex_get(x);
-  if( (var_index=tab_itab_find(lt, var_name)) != itab_FAIL) {
-        code_append(c, opcode_LV, 1, (STACK_FRAME_RESERVE + lt->itab[var_index].address));
+    int index;
+  char* token_buffo = malloc(sizeof(char)*strlen(x->token));
+    strcpy(token_buffo, x->token);
+    lex_get(x);
+    if(x->type==token_LBRACK) {
+      if( (index=tab_itab_find(lt, token_buffo)) != itab_FAIL) {
+        code_append(c, opcode_LA, 1, (STACK_FRAME_RESERVE + lt->itab[index].address));
       }
-      else if ((var_index=tab_itab_find(gt, var_name)) != itab_FAIL) {
-        code_append(c, opcode_LV, 0, gt->itab[var_index].address);
+      else if ((index=tab_itab_find(gt, token_buffo)) != itab_FAIL) {
+        code_append(c, opcode_LA, 0, gt->itab[index].address);
+      }
+      else {syntax_error(x,"variable not found in gt and lt");}
+
+      int i;
+      tab_t* t;
+      if ((i=tab_itab_find(gt, token_buffo)) != itab_FAIL) t = gt;
+      else if((i=tab_itab_find(lt, token_buffo)) != itab_FAIL) t = lt;
+      else syntax_error(x,"this variable not used");
+      parse_array_index(c, x, gt, lt, t, i);
+      code_append(c, opcode_LI, 0, 0);
     }
-    free(var_name);
+    else {
+      if( (index=tab_itab_find(lt, token_buffo)) != itab_FAIL) {
+        code_append(c, opcode_LV, 1, (STACK_FRAME_RESERVE + lt->itab[index].address));
+      }
+      else if ((index=tab_itab_find(gt, token_buffo)) != itab_FAIL) {
+        code_append(c, opcode_LV, 0, gt->itab[index].address);
+      }
+      else {syntax_error(x,"variable not found in gt and lt");}
+    }
+
   }
 }  
  
@@ -631,7 +666,11 @@ static void parse_array_index(code_t *c, lex_t *x, tab_t *gt, tab_t *lt, tab_t *
 { 
   at("parse_array_index");  
   int d=1;
-  while(x->type==token_LBRACK) {
+  if (x->type == token_ID){
+     lex_get(x);
+  }
+  if(x->type==token_LBRACK){
+    while(x->type==token_LBRACK) {
     lex_get(x);
     parse_expression(c, x, gt, lt);
     code_append(c, opcode_LC, t->atab[t->itab[i].aref+d-1].elementsize, 0);
@@ -640,6 +679,7 @@ static void parse_array_index(code_t *c, lex_t *x, tab_t *gt, tab_t *lt, tab_t *
     if(x->type==token_RBRACK) lex_get(x);
     else syntax_error(x, "type name expected']'");
     d++;
+  }
   }
 }
  
@@ -650,7 +690,7 @@ static void parse_assign(code_t *c, lex_t *x, tab_t *gt, tab_t *lt)
 // side (左辺) の略). この後, ”=” 記号を確認し, 「式」の解析に parse expression を呼び出し, 最後に
 // ”;” を確認すればよい.
   parse_lhs_expression(c, x, gt, lt);
-  lex_get(x);
+  //lex_get(x);
   if(x->type == token_EQ) {lex_get(x);}
   else {syntax_error(x, "'=' expected");}
 
@@ -750,7 +790,7 @@ static void parse_call(code_t *c, lex_t *x, tab_t *gt, tab_t *lt)
     if(x->type==token_LPAREN) {lex_get(x);}
     else {syntax_error(x, "'(' expected");}
     parse_expression(c, x, gt, lt);
-
+    if (x->type == token_ID) {lex_get(x);}
     if(x->type==token_RPAREN) {lex_get(x);}
     else {syntax_error(x, "'1)' expected");}
     code_append(c, opcode_DUP, 0, 0);
@@ -815,20 +855,32 @@ static void parse_lhs_expression(code_t *c, lex_t *x, tab_t *gt, tab_t *lt)
   at("parse_lhs_expression");
   int assg_index;
   int star_counter = 0;
+  // "*"* の処理
   while (x->type == token_STAR) {
     star_counter++;
     lex_get(x);
   }
-  if( (assg_index=tab_itab_find(lt, x->token)) != itab_FAIL) {
-        code_append(c, opcode_LA, 1, (STACK_FRAME_RESERVE + lt->itab[assg_index].address));
+  // 変数名の処理
+  tab_t *t = NULL;
+  if ((assg_index = tab_itab_find(lt, x->token)) != itab_FAIL) {
+    t = lt;
+    code_append(c, opcode_LA, 1, (STACK_FRAME_RESERVE + lt->itab[assg_index].address));
   }
-  else if ((assg_index=tab_itab_find(gt, x->token)) != itab_FAIL) {
-        code_append(c, opcode_LA, 0, gt->itab[assg_index].address);
+  else if ((assg_index = tab_itab_find(gt, x->token)) != itab_FAIL) {
+    t = gt;
+    code_append(c, opcode_LA, 0, gt->itab[assg_index].address);
+  }
+  else {
+    syntax_error(x, "undefined variable in lhs expression");
   }
 
+    parse_array_index(c, x, gt, lt, t, assg_index);
 
-  for(int i=0; i<=(star_counter-1); i++) code_append(c, opcode_LI, 0, 0);
-} 
+  // ポインタ修飾に対する LI 命令の生成
+  for (int i = 0; i < star_counter; i++) {
+    code_append(c, opcode_LI, 0, 0);
+  }
+}
   
  
 static int id_isfunc(char *id, tab_t *gt, tab_t *lt)  
